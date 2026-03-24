@@ -1,0 +1,23 @@
+{
+  "name": "load-testing-suite",
+  "version": "1.0.0",
+  "description": "Real-time load testing with matrix verification for multiple hostnames",
+  "main": "load-test.js",
+  "scripts": {
+    "test": "node load-test.js",
+    "aggregate": "node aggregate-results.js"
+  },
+  "keywords": [
+    "load-testing",
+    "performance",
+    "matrix-verification"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "p-limit": "^5.0.0",
+    "cli-progress": "^3.12.0",
+    "chalk": "^4.1.2"
+  }
+}
