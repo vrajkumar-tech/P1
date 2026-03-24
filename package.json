@@ -5,7 +5,9 @@
   "main": "load-test.js",
   "scripts": {
     "test": "node load-test.js",
-    "aggregate": "node aggregate-results.js"
+    "aggregate": "node aggregate-results.js",
+    "ga-test": "node ga-navigation-test.js",
+    "aggregate-navigation": "node aggregate-navigation-results.js"
   },
   "keywords": [
     "load-testing",
@@ -18,6 +20,7 @@
     "axios": "^1.6.0",
     "p-limit": "^3.1.0",
     "cli-progress": "^3.12.0",
-    "chalk": "^4.1.2"
+    "chalk": "^4.1.2",
+    "playwright": "^1.40.0"
   }
 }
