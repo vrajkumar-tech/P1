@@ -1,0 +1,66 @@
+name: Google Search & Site Discovery Navigation Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: 'Test duration in minutes'
+        required: false
+        default: '10'
+      concurrent_sessions:
+        description: 'Number of concurrent user sessions'
+        required: false
+        default: '3'
+      session_depth:
+        description: 'Average pages per session (1-8)'
+        required: false
+        default: '4'
+  schedule:
+    - cron: '0 */6 * * *'  # Run every 6 hours
+
+jobs:
+  discover-and-test-site:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npx playwright install chromium
+          npx playwright install-deps chromium
+
+      - name: Run Google Search and Navigation Test
+        env:
+          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '10' }}
+          CONCURRENT_SESSIONS: ${{ github.event.inputs.concurrent_sessions || '3' }}
+          SESSION_DEPTH: ${{ github.event.inputs.session_depth || '4' }}
+        run: node google-search-navigation-test.js
+
+      - name: Upload Search Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-navigation-results
+          path: |
+            search-results-*.json
+            navigation-results-*.json
+            navigation-report-*.html
+            screenshots/*.png
+          retention-days: 30
+
+      - name: Upload Session Recordings
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: session-traces
+          path: |
+            traces/*.zip
+          retention-days: 7
