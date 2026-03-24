@@ -1,0 +1,157 @@
+name: Impression Tracking Health Check
+
+on:
+  schedule:
+    # Run every hour at minute 0
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+jobs:
+  impression-tracking:
+    runs-on: ubuntu-latest
+    environment: github-pages
+    
+    strategy:
+      matrix:
+        hostname: ['https://opp-loans.web.app', 'https://opploans.static2.website', 'https://opploans.netlify.app']
+      fail-fast: false
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: |
+        npm init -y
+        npm install axios
+    
+    - name: Create impression tracking script
+      run: |
+        cat > impression-tracker.js << 'EOF'
+        const axios = require('axios');
+        
+        // Define all hardcoded endpoints based on the HTML files found
+        const endpoints = [
+          '/',                    // index.html
+          '/about_us.html',       // about us page
+          '/about_us_2.html',     // about us alternative
+          '/california_disclosures.html', // California disclosures
+          '/faqs.html',           // FAQs page
+          '/how_it_works.html',   // How it works
+          '/oppu.html',          // OPPU page
+          '/personal_loans.html', // Personal loans
+          '/privacy_policy.html', // Privacy policy
+          '/rates_terms.html',    // Rates and terms
+          '/resources.html',      // Resources
+          '/terms_of_use.html'    // Terms of use
+        ];
+        
+        const hostname = process.env.HOSTNAME;
+        const concurrentRequests = 1000;
+        
+        async function makeRequest(url, requestId) {
+          try {
+            const startTime = Date.now();
+            const response = await axios.get(url, {
+              timeout: 30000, // 30 second timeout
+              headers: {
+                'User-Agent': 'GitHub-Actions-Impression-Tracker/1.0',
+                'X-Request-ID': requestId,
+                'X-Impression-Tracking': 'true'
+              }
+            });
+            const endTime = Date.now();
+            
+            return {
+              url,
+              status: response.status,
+              responseTime: endTime - startTime,
+              success: true,
+              requestId
+            };
+          } catch (error) {
+            return {
+              url,
+              status: error.response?.status || 'ERROR',
+              responseTime: Date.now() - startTime,
+              success: false,
+              error: error.message,
+              requestId
+            };
+          }
+        }
+        
+        async function runImpressionTracking() {
+          console.log(`Starting impression tracking for ${hostname}`);
+          console.log(`Will make ${concurrentRequests} concurrent requests to ${endpoints.length} endpoints`);
+          
+          const allUrls = [];
+          for (let i = 0; i < concurrentRequests; i++) {
+            const endpoint = endpoints[i % endpoints.length];
+            allUrls.push(`${hostname}${endpoint}`);
+          }
+          
+          const startTime = Date.now();
+          const promises = allUrls.map((url, index) => makeRequest(url, index));
+          const results = await Promise.all(promises);
+          const endTime = Date.now();
+          
+          const successful = results.filter(r => r.success && r.status === 200);
+          const failed = results.filter(r => !r.success || r.status !== 200);
+          
+          console.log(`\n=== Impression Tracking Results for ${hostname} ===`);
+          console.log(`Total requests: ${results.length}`);
+          console.log(`Successful (200): ${successful.length}`);
+          console.log(`Failed: ${failed.length}`);
+          console.log(`Success rate: ${((successful.length / results.length) * 100).toFixed(2)}%`);
+          console.log(`Total time: ${endTime - startTime}ms`);
+          console.log(`Average response time: ${Math.round(results.reduce((sum, r) => sum + r.responseTime, 0) / results.length)}ms`);
+          
+          if (failed.length > 0) {
+            console.log(`\n=== Failed Requests ===`);
+            failed.slice(0, 10).forEach(failure => {
+              console.log(`URL: ${failure.url}, Status: ${failure.status}, Error: ${failure.error}`);
+            });
+            if (failed.length > 10) {
+              console.log(`... and ${failed.length - 10} more failures`);
+            }
+          }
+          
+          // Exit with error code if success rate is below 95%
+          const successRate = (successful.length / results.length) * 100;
+          if (successRate < 95) {
+            console.error(`\nERROR: Success rate ${successRate.toFixed(2)}% is below 95% threshold`);
+            process.exit(1);
+          }
+          
+          console.log(`\n✅ Impression tracking completed successfully for ${hostname}`);
+        }
+        
+        runImpressionTracking().catch(error => {
+          console.error('Fatal error:', error);
+          process.exit(1);
+        });
+        EOF
+    
+    - name: Run impression tracking
+      env:
+        HOSTNAME: ${{ matrix.hostname }}
+      run: |
+        echo "Testing hostname: ${{ matrix.hostname }}"
+        node impression-tracker.js
+    
+    - name: Report results
+      if: always()
+      run: |
+        if [ $? -eq 0 ]; then
+          echo "✅ Impression tracking successful for ${{ matrix.hostname }}"
+        else
+          echo "❌ Impression tracking failed for ${{ matrix.hostname }}"
+          exit 1
+        fi
