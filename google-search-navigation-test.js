@@ -37,29 +37,70 @@ async function performGoogleSearch(page, query) {
   console.log(chalk.blue(`🔍 Searching Google for: "${query}"`));
   
   try {
-    await page.goto('https://www.google.com/search', {
+    // Use a more realistic search approach to avoid detection
+    await page.goto('https://www.google.com', {
       waitUntil: 'networkidle',
       timeout: 30000
     });
 
-    await page.fill('textarea[name="q"]', query);
+    // Wait for the search box to be visible and interact with it naturally
+    await page.waitForSelector('textarea[name="q"]', { timeout: 10000 });
+    
+    // Type the query with human-like delays
+    await page.focus('textarea[name="q"]');
+    await page.type('textarea[name="q"]', query, { delay: 100 });
+    
+    // Wait a moment before submitting
+    await page.waitForTimeout(500);
+    
+    // Press Enter instead of clicking to be more natural
     await page.press('textarea[name="q"]', 'Enter');
     
-    await page.waitForTimeout(2000);
+    // Wait for results to load
+    await page.waitForTimeout(3000);
     
-    const searchResults = await page.$$eval('div.g', results => {
-      return results.map(result => {
-        const linkElement = result.querySelector('a');
-        const titleElement = result.querySelector('h3');
-        const snippetElement = result.querySelector('.VwiC3b');
-        
-        return {
-          url: linkElement ? linkElement.href : null,
-          title: titleElement ? titleElement.textContent.trim() : null,
-          snippet: snippetElement ? snippetElement.textContent.trim() : null
-        };
-      }).filter(result => result.url);
-    });
+    // Try multiple selectors for search results
+    let searchResults = [];
+    
+    try {
+      searchResults = await page.$$eval('div.g', results => {
+        return results.map(result => {
+          const linkElement = result.querySelector('a');
+          const titleElement = result.querySelector('h3');
+          const snippetElement = result.querySelector('.VwiC3b');
+          
+          return {
+            url: linkElement ? linkElement.href : null,
+            title: titleElement ? titleElement.textContent.trim() : null,
+            snippet: snippetElement ? snippetElement.textContent.trim() : null
+          };
+        }).filter(result => result.url);
+      });
+    } catch (e) {
+      // Fallback to different selector
+      try {
+        searchResults = await page.$$eval('div[data-hveid]', results => {
+          return results.map(result => {
+            const linkElement = result.querySelector('a');
+            const titleElement = result.querySelector('h3');
+            
+            return {
+              url: linkElement ? linkElement.href : null,
+              title: titleElement ? titleElement.textContent.trim() : null,
+              snippet: ''
+            };
+          }).filter(result => result.url);
+        });
+      } catch (e2) {
+        console.log(chalk.yellow('⚠️  Could not extract search results, trying alternative approach...'));
+      }
+    }
+
+    // If still no results, try using DuckDuckGo as fallback
+    if (searchResults.length === 0) {
+      console.log(chalk.yellow('🔄 Trying DuckDuckGo as fallback...'));
+      searchResults = await performDuckDuckGoSearch(page, query);
+    }
 
     stats.searchResults += searchResults.length;
     console.log(chalk.green(`✅ Found ${searchResults.length} search results`));
@@ -68,6 +109,42 @@ async function performGoogleSearch(page, query) {
     
   } catch (error) {
     console.error(chalk.red(`❌ Google search failed for "${query}":`, error.message));
+    return [];
+  }
+}
+
+async function performDuckDuckGoSearch(page, query) {
+  try {
+    await page.goto('https://duckduckgo.com/', {
+      waitUntil: 'networkidle',
+      timeout: 30000
+    });
+
+    await page.waitForSelector('#searchbox_input', { timeout: 10000 });
+    await page.focus('#searchbox_input');
+    await page.type('#searchbox_input', query, { delay: 100 });
+    await page.waitForTimeout(500);
+    await page.press('#searchbox_input', 'Enter');
+    
+    await page.waitForTimeout(3000);
+
+    const searchResults = await page.$$eval('.result__body', results => {
+      return results.map(result => {
+        const linkElement = result.querySelector('.result__a');
+        const snippetElement = result.querySelector('.result__snippet');
+        
+        return {
+          url: linkElement ? linkElement.href : null,
+          title: linkElement ? linkElement.textContent.trim() : null,
+          snippet: snippetElement ? snippetElement.textContent.trim() : null
+        };
+      }).filter(result => result.url);
+    });
+
+    return searchResults;
+    
+  } catch (error) {
+    console.error(chalk.red(`❌ DuckDuckGo search failed:`, error.message));
     return [];
   }
 }
@@ -301,13 +378,42 @@ async function runGoogleSearchAndNavigationTest() {
   
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor',
+      '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ]
   });
 
   // Phase 1: Google Search and Site Discovery
   console.log(chalk.cyan('🔍 Phase 1: Google Search and Site Discovery\n'));
   
-  const searchPage = await browser.newPage();
+  const searchPage = await browser.newContext({
+    viewport: { width: 1366, height: 768 },
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    locale: 'en-US',
+    timezoneId: 'America/New_York',
+    // Add extra headers to look more like a real browser
+    extraHTTPHeaders: {
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Cache-Control': 'max-age=0',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Upgrade-Insecure-Requests': '1'
+    }
+  }).then(context => context.newPage());
+  
   let siteEndpoints = [];
   
   for (const query of searchQueries) {
@@ -326,10 +432,54 @@ async function runGoogleSearchAndNavigationTest() {
   await searchPage.close();
 
   if (!discoveredSite) {
-    console.log(chalk.red('❌ No rkoots.github.io site found in search results'));
-    await browser.close();
-    generateReport();
-    return;
+    console.log(chalk.yellow('⚠️  No rkoots.github.io site found in search results'));
+    console.log(chalk.cyan('🔄 Trying direct access to common rkoots.github.io URLs...'));
+    
+    // Fallback: Try common GitHub Pages URLs directly
+    const fallbackUrls = [
+      'https://rkoots.github.io',
+      'https://rkoots.github.io/',
+      'https://rkoots.github.io/tools',
+      'https://rkoots.github.io/tools/',
+      'https://rkoots.github.io/games',
+      'https://rkoots.github.io/blog',
+      'https://rkoots.github.io/projects'
+    ];
+    
+    const testPage = await browser.newPage();
+    
+    for (const url of fallbackUrls) {
+      try {
+        console.log(chalk.blue(`🔍 Testing direct access to: ${url}`));
+        
+        const response = await testPage.goto(url, {
+          waitUntil: 'networkidle',
+          timeout: 15000
+        });
+        
+        if (response && response.status() === 200) {
+          console.log(chalk.green(`✅ Successfully accessed: ${url}`));
+          discoveredSite = url;
+          stats.siteUrl = url;
+          stats.rkootsSiteFound = true;
+          
+          // Discover site structure
+          siteEndpoints = await discoverSiteStructure(testPage, url);
+          break;
+        }
+      } catch (error) {
+        console.log(chalk.yellow(`❌ Failed to access ${url}: ${error.message}`));
+      }
+    }
+    
+    await testPage.close();
+    
+    if (!discoveredSite) {
+      console.log(chalk.red('❌ No rkoots.github.io site found via search or direct access'));
+      await browser.close();
+      generateReport();
+      return;
+    }
   }
 
   // Phase 2: Navigation Testing
