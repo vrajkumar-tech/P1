@@ -10,7 +10,7 @@ on:
       concurrent_sessions:
         description: 'Number of concurrent user sessions'
         required: false
-        default: '10'
+        default: '100'
       session_depth:
         description: 'Average pages per session (1-8)'
         required: false
