@@ -1,0 +1,174 @@
+name: Google Analytics Navigation & Funnel Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: 'Test duration in minutes'
+        required: false
+        default: '10'
+      concurrent_sessions:
+        description: 'Number of concurrent user sessions'
+        required: false
+        default: '50'
+      session_depth:
+        description: 'Average pages per session (1-12)'
+        required: false
+        default: '5'
+  schedule:
+    - cron: '0 */8 * * *'  # Run every 8 hours
+
+jobs:
+  ga-navigation-test-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        hostname: 
+          - 'https://opp-loans.web.app'
+          - 'https://opploans.static2.website'
+          - 'https://opploans.netlify.app'
+          - 'https://rkoots.github.com'
+      fail-fast: false
+      max-parallel: 3
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npx playwright install chromium
+          npx playwright install-deps chromium
+
+      - name: Run GA Navigation Test for ${{ matrix.hostname }}
+        env:
+          TARGET_HOST: ${{ matrix.hostname }}
+          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '10' }}
+          CONCURRENT_SESSIONS: ${{ github.event.inputs.concurrent_sessions || '50' }}
+          SESSION_DEPTH: ${{ github.event.inputs.session_depth || '5' }}
+        run: node ga-navigation-test.js
+
+      - name: Upload Navigation Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ga-navigation-results-${{ strategy.job-index }}
+          path: |
+            navigation-results-*.json
+            navigation-report-*.html
+            funnel-analysis-*.json
+            screenshots/*.png
+          retention-days: 30
+
+      - name: Upload Session Recordings
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: session-traces-${{ strategy.job-index }}
+          path: |
+            traces/*.zip
+          retention-days: 7
+
+  aggregate-navigation-results:
+    needs: ga-navigation-test-matrix
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Aggregate Navigation Results
+        run: node aggregate-navigation-results.js
+
+      - name: Upload Aggregated Navigation Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: aggregated-navigation-report
+          path: |
+            aggregated-navigation-report.json
+            aggregated-navigation-report.html
+            funnel-comparison.json
+            funnel-comparison.html
+          retention-days: 90
+
+      - name: Comment PR with Navigation Results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('aggregated-navigation-report.json', 'utf8'));
+            
+            let comment = '## 🎯 Google Analytics Navigation Test Results\n\n';
+            comment += `**Total Sessions**: ${report.totalSessions}\n`;
+            comment += `**Total Page Views**: ${report.totalPageViews}\n`;
+            comment += `**Avg Pages/Session**: ${report.avgPagesPerSession}\n`;
+            comment += `**Avg Session Duration**: ${report.avgSessionDuration}s\n`;
+            comment += `**Bounce Rate**: ${report.bounceRate}%\n\n`;
+            comment += '### Per-Host Results\n\n';
+            
+            for (const [host, stats] of Object.entries(report.hostStats)) {
+              comment += `#### ${host}\n`;
+              comment += `- Sessions: ${stats.sessions}\n`;
+              comment += `- Page Views: ${stats.pageViews}\n`;
+              comment += `- Avg Duration: ${stats.avgDuration}s\n`;
+              comment += `- GA Events Tracked: ${stats.gaEventsTracked}\n`;
+              comment += `- Navigation Success: ${stats.navigationSuccessRate}%\n\n`;
+            }
+            
+            comment += '### 🔄 Funnel Analysis\n\n';
+            for (const [funnel, data] of Object.entries(report.funnelAnalysis)) {
+              comment += `**${funnel}**: ${data.completionRate}% completion\n`;
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Check Funnel Performance
+        run: |
+          node -e "
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('aggregated-navigation-report.json', 'utf8'));
+          
+          let failed = false;
+          for (const [host, stats] of Object.entries(report.hostStats)) {
+            if (stats.navigationSuccessRate < 95) {
+              console.log(\`❌ ${host} navigation success rate (${stats.navigationSuccessRate}%) is below 95%\`);
+              failed = true;
+            }
+            if (stats.bounceRate > 50) {
+              console.log(\`⚠️  ${host} bounce rate (${stats.bounceRate}%) is above 50%\`);
+            }
+          }
+          
+          if (failed) {
+            console.log('\\n❌ Navigation tests failed quality thresholds');
+            process.exit(1);
+          } else {
+            console.log('\\n✅ All navigation tests passed quality thresholds');
+          }
+          "
