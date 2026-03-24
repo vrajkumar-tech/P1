@@ -27,7 +27,7 @@ jobs:
           - 'https://opp-loans.web.app'
           - 'https://opploans.static2.website'
           - 'https://opploans.netlify.app'
-          - 'https://rkoots.github.com'
+          - 'https://rkoots.github.com/tools/'
       fail-fast: false
       max-parallel: 3
     
