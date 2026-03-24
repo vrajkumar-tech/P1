@@ -6,17 +6,17 @@ on:
       duration_minutes:
         description: 'Test duration in minutes'
         required: false
-        default: '10'
+        default: '25'
       concurrent_sessions:
         description: 'Number of concurrent user sessions'
         required: false
-        default: '50'
+        default: '100'
       session_depth:
         description: 'Average pages per session (1-12)'
         required: false
         default: '5'
   schedule:
-    - cron: '0 */8 * * *'  # Run every 8 hours
+    - cron: '0 */1 * * *'  # Run every 8 hours
 
 jobs:
   ga-navigation-test-matrix:
