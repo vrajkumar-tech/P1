@@ -10,13 +10,13 @@ on:
       concurrent_sessions:
         description: 'Number of concurrent user sessions'
         required: false
-        default: '3'
+        default: '10'
       session_depth:
         description: 'Average pages per session (1-8)'
         required: false
         default: '4'
   schedule:
-    - cron: '0 */6 * * *'  # Run every 6 hours
+    - cron: '0 */1 * * *'  # Run every 6 hours
 
 jobs:
   discover-and-test-site:
