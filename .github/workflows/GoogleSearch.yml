@@ -16,7 +16,7 @@ on:
         required: false
         default: '4'
   schedule:
-    - cron: '0 */1 * * *'  # Run every 6 hours
+    - cron: '0 1 * * *'  # Run every 6 hours
 
 jobs:
   discover-and-test-site:
