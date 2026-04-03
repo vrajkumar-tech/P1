@@ -176,6 +176,13 @@ This article was automatically generated from RSS feeds. For more tech insights 
         
         logger.info(f"Found {len(recent_entries)} entries from the last {hours} hour(s)")
         return recent_entries
+
+    def get_latest_entries(self, entries: List[Dict], count: int = 10) -> List[Dict]:
+        """Get the latest N entries sorted by publication date"""
+        sorted_entries = sorted(entries, key=lambda item: item['pub_date'], reverse=True)
+        latest_entries = sorted_entries[:count]
+        logger.info(f"Selected latest {len(latest_entries)} entries")
+        return latest_entries
     
     def send_email(self, title: str, content: str, link: str, pub_date: datetime) -> bool:
         """Send individual blog post via email"""
@@ -449,7 +456,11 @@ Article Content:
         recent_entries = self.filter_recent_entries(all_entries, 1)
         
         if not recent_entries:
-            logger.info("No recent entries found. Skipping email.")
+            logger.info("No recent entries found. Using latest 10 entries as fallback.")
+            recent_entries = self.get_latest_entries(all_entries, 10)
+
+        if not recent_entries:
+            logger.info("No entries found at all. Skipping email.")
             return
         
         recent_entries.sort(key=lambda entry: entry['pub_date'], reverse=True)
