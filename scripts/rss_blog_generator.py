@@ -9,6 +9,7 @@ import requests
 import json
 import os
 import re
+import html
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -30,6 +31,9 @@ class RSSBlogGenerator:
         ]
         self.base_url = "https://rkoots.github.io/blog/"
         self.author = "rkoots"
+        self.gemini_api_key = os.getenv('GEMINI_API_KEY', '')
+        self.gemini_model = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+        self.gemini_api_name = "generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         
     def fetch_feed_entries(self, feed_url: str) -> List[Dict]:
         """Fetch and parse RSS feed entries"""
@@ -51,7 +55,7 @@ class RSSBlogGenerator:
                 entries.append({
                     'title': entry.title,
                     'link': entry.link,
-                    'description': getattr(entry, 'description', '') or getattr(entry, 'summary', ''),
+                    'description': self.clean_text(getattr(entry, 'description', '') or getattr(entry, 'summary', '')),
                     'pub_date': pub_date,
                     'source': feed_url
                 })
@@ -192,6 +196,7 @@ This article was automatically generated from RSS feeds. For more tech insights 
             msg['Subject'] = f"{title}"
             msg['From'] = sender_email
             msg['To'] = recipient_email
+            msg['X-RSS-Article-Link'] = link
             
             # Create detailed email body with read more links after each paragraph
             email_body = f"""
@@ -252,37 +257,7 @@ This article was automatically generated from RSS feeds. For more tech insights 
     
     def format_detailed_content(self, title: str, description: str, link: str, pub_date: datetime) -> str:
         """Format detailed content with 5-7 exhaustive paragraphs"""
-        # Fetch full content for detailed article
-        full_content = self.fetch_article_content(link)
-        
-        # Use full content if available, otherwise use description
-        content_text = full_content or description
-        
-        # Split content into paragraphs
-        paragraphs = content_text.split('\n\n')
-        
-        # Clean up paragraphs and filter empty ones
-        clean_paragraphs = []
-        for para in paragraphs:
-            para = para.strip()
-            if para and len(para) > 30:  # Lower threshold to include more content
-                clean_paragraphs.append(para)
-        
-        # If no good paragraphs, create detailed content from title and description
-        if not clean_paragraphs:
-            clean_paragraphs = self.create_detailed_paragraphs(title, description, link)
-        
-        # Ensure we have 5-7 paragraphs
-        target_paragraphs = 6  # Target 6 paragraphs (middle of 5-7 range)
-        
-        # If we have fewer paragraphs, expand existing ones or create new ones
-        if len(clean_paragraphs) < target_paragraphs:
-            expanded_paragraphs = self.expand_content(clean_paragraphs, title, description, target_paragraphs)
-            clean_paragraphs = expanded_paragraphs
-        
-        # If we have more paragraphs, select the best ones
-        if len(clean_paragraphs) > 7:
-            clean_paragraphs = clean_paragraphs[:7]
+        clean_paragraphs = self.build_email_content(title, description, link)
         
         # Format each paragraph with read more link
         formatted_content = ""
@@ -290,10 +265,31 @@ This article was automatically generated from RSS feeds. For more tech insights 
             formatted_content += f"""
         <div class="paragraph">
             <p><strong>Paragraph {i+1}:</strong> {paragraph}</p>
-            <a href="{self.base_url}" class="readmore">Read more in rkoots</a>
+            <a href="{link}" class="readmore">Read original article</a>
         </div>"""
         
         return formatted_content
+    
+    def build_email_content(self, title: str, description: str, link: str) -> List[str]:
+        full_content = self.fetch_article_content(link)
+        source_text = self.clean_text(full_content or description)
+
+        gemini_paragraphs = self.expand_with_gemini(title, description, link, source_text)
+        if gemini_paragraphs:
+            return gemini_paragraphs
+
+        clean_paragraphs = self.split_into_paragraphs(source_text)
+
+        if not clean_paragraphs:
+            clean_paragraphs = self.create_detailed_paragraphs(title, description, link)
+
+        if len(clean_paragraphs) < 5:
+            clean_paragraphs = self.expand_content(clean_paragraphs, title, description, 6)
+
+        if len(clean_paragraphs) > 7:
+            clean_paragraphs = clean_paragraphs[:7]
+
+        return clean_paragraphs
     
     def create_detailed_paragraphs(self, title: str, description: str, link: str) -> List[str]:
         """Create detailed paragraphs when content is insufficient"""
@@ -348,6 +344,96 @@ This article was automatically generated from RSS feeds. For more tech insights 
         
         return templates[index % len(templates)]
     
+    def clean_text(self, value: str) -> str:
+        """Convert HTML-heavy text into clean plain text"""
+        if not value:
+            return ""
+
+        soup = BeautifulSoup(value, 'html.parser')
+        text = soup.get_text(separator=' ', strip=True)
+        text = html.unescape(text)
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
+    def split_into_paragraphs(self, content_text: str) -> List[str]:
+        """Split article content into usable paragraph blocks"""
+        if not content_text:
+            return []
+
+        raw_paragraphs = re.split(r'(?<=[.!?])\s{2,}|\n\s*\n+', content_text)
+        paragraphs = []
+
+        for paragraph in raw_paragraphs:
+            paragraph = self.clean_text(paragraph)
+            if len(paragraph) >= 80:
+                paragraphs.append(paragraph)
+
+        return paragraphs
+
+    def expand_with_gemini(self, title: str, description: str, link: str, article_content: str) -> Optional[List[str]]:
+        """Use Gemini to create 5-7 article-specific paragraphs"""
+        if not self.gemini_api_key or not article_content:
+            return None
+
+        prompt = f"""Create exactly 6 detailed paragraphs for a blog email based strictly on the source article below.
+Requirements:
+- Use only the provided information.
+- Do not invent facts.
+- Each paragraph should be 3 to 5 sentences.
+- Return plain text only.
+- Separate each paragraph with a blank line.
+
+Title: {title}
+Link: {link}
+Summary: {description}
+
+Article Content:
+{article_content[:12000]}
+"""
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent?key={self.gemini_api_key}"
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ]
+        }
+
+        try:
+            response = requests.post(url, json=payload, timeout=45)
+            response.raise_for_status()
+            data = response.json()
+            candidates = data.get('candidates', [])
+            if not candidates:
+                logger.warning("Gemini returned no candidates for article: %s", title)
+                return None
+
+            parts = candidates[0].get('content', {}).get('parts', [])
+            generated_text = "\n".join(part.get('text', '') for part in parts if part.get('text'))
+            if not generated_text.strip():
+                logger.warning("Gemini returned empty text for article: %s", title)
+                return None
+
+            paragraphs = [
+                self.clean_text(paragraph)
+                for paragraph in re.split(r'\n\s*\n+', generated_text)
+                if self.clean_text(paragraph)
+            ]
+
+            if len(paragraphs) < 5:
+                logger.warning("Gemini returned insufficient paragraphs for article: %s", title)
+                return None
+
+            return paragraphs[:7]
+        except Exception as e:
+            logger.error(f"Error expanding content with Gemini for {title}: {str(e)}")
+            return None
+    
     def run(self):
         """Main execution function"""
         logger.info("Starting RSS Blog Generator")
@@ -366,9 +452,12 @@ This article was automatically generated from RSS feeds. For more tech insights 
             logger.info("No recent entries found. Skipping email.")
             return
         
+        recent_entries.sort(key=lambda entry: entry['pub_date'], reverse=True)
+        
         # Send individual emails for each recent entry
         successful_emails = 0
         for entry in recent_entries:
+            logger.info("Preparing single-article email for: %s", entry['title'])
             # Format detailed content
             detailed_content = self.format_detailed_content(
                 entry['title'],
