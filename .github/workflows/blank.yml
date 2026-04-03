@@ -79,10 +79,17 @@ jobs:
                           else:
                               pub_date = datetime.now()
                           
+                          # Get description with proper fallback
+                          description = ""
+                          if hasattr(entry, 'description'):
+                              description = entry.description
+                          elif hasattr(entry, 'summary'):
+                              description = entry.summary
+                          
                           entries.append({
                               'title': entry.title,
                               'link': entry.link,
-                              'description': entry.description if hasattr(entry, 'description') else entry.summary,
+                              'description': description,
                               'pub_date': pub_date,
                               'source': feed_url
                           })
