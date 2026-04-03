@@ -32,8 +32,14 @@ class RSSBlogGenerator:
         self.base_url = "https://rkoots.github.io/blog/"
         self.author = "rkoots"
         self.gemini_api_key = os.getenv('GEMINI_API_KEY', '')
-        self.gemini_model = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+        self.gemini_model = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
         self.gemini_api_name = "generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        self.gemini_model_fallbacks = [
+            self.gemini_model,
+            'gemini-2.0-flash',
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-latest'
+        ]
         
     def fetch_feed_entries(self, feed_url: str) -> List[Dict]:
         """Fetch and parse RSS feed entries"""
@@ -53,7 +59,7 @@ class RSSBlogGenerator:
                     pub_date = datetime.now()
                 
                 entries.append({
-                    'title': entry.title,
+                    'title': self.clean_text(getattr(entry, 'title', 'Untitled Article')),
                     'link': entry.link,
                     'description': self.clean_text(getattr(entry, 'description', '') or getattr(entry, 'summary', '')),
                     'pub_date': pub_date,
@@ -398,7 +404,6 @@ Article Content:
 {article_content[:12000]}
 """
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent?key={self.gemini_api_key}"
         payload = {
             "contents": [
                 {
@@ -411,35 +416,48 @@ Article Content:
             ]
         }
 
-        try:
-            response = requests.post(url, json=payload, timeout=45)
-            response.raise_for_status()
-            data = response.json()
-            candidates = data.get('candidates', [])
-            if not candidates:
-                logger.warning("Gemini returned no candidates for article: %s", title)
-                return None
+        seen_models = set()
 
-            parts = candidates[0].get('content', {}).get('parts', [])
-            generated_text = "\n".join(part.get('text', '') for part in parts if part.get('text'))
-            if not generated_text.strip():
-                logger.warning("Gemini returned empty text for article: %s", title)
-                return None
+        for model_name in self.gemini_model_fallbacks:
+            if not model_name or model_name in seen_models:
+                continue
 
-            paragraphs = [
-                self.clean_text(paragraph)
-                for paragraph in re.split(r'\n\s*\n+', generated_text)
-                if self.clean_text(paragraph)
-            ]
+            seen_models.add(model_name)
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.gemini_api_key}"
 
-            if len(paragraphs) < 5:
-                logger.warning("Gemini returned insufficient paragraphs for article: %s", title)
-                return None
+            try:
+                logger.info("Expanding content with Gemini model %s for article: %s", model_name, title)
+                response = requests.post(url, json=payload, timeout=45)
+                response.raise_for_status()
+                data = response.json()
+                candidates = data.get('candidates', [])
+                if not candidates:
+                    logger.warning("Gemini returned no candidates with model %s for article: %s", model_name, title)
+                    continue
 
-            return paragraphs[:7]
-        except Exception as e:
-            logger.error(f"Error expanding content with Gemini for {title}: {str(e)}")
-            return None
+                parts = candidates[0].get('content', {}).get('parts', [])
+                generated_text = "\n".join(part.get('text', '') for part in parts if part.get('text'))
+                if not generated_text.strip():
+                    logger.warning("Gemini returned empty text with model %s for article: %s", model_name, title)
+                    continue
+
+                paragraphs = [
+                    self.clean_text(paragraph)
+                    for paragraph in re.split(r'\n\s*\n+', generated_text)
+                    if self.clean_text(paragraph)
+                ]
+
+                if len(paragraphs) < 5:
+                    logger.warning("Gemini returned insufficient paragraphs with model %s for article: %s", model_name, title)
+                    continue
+
+                logger.info("Gemini expansion succeeded with model %s for article: %s", model_name, title)
+                return paragraphs[:7]
+            except Exception as e:
+                logger.warning("Gemini model %s failed for article %s: %s", model_name, title, str(e))
+
+        logger.error("Error expanding content with Gemini for %s: no configured Gemini model succeeded", title)
+        return None
     
     def run(self):
         """Main execution function"""
