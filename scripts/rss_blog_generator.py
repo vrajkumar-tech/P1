@@ -10,6 +10,7 @@ import json
 import os
 import re
 import html
+from urllib.parse import urlparse
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -37,9 +38,11 @@ class RSSBlogGenerator:
         self.gemini_model_fallbacks = [
             self.gemini_model,
             'gemini-2.0-flash',
-            'gemini-1.5-flash',
-            'gemini-1.5-flash-latest'
+            'gemini-2.0-flash-lite',
+            'gemini-1.5-pro'
         ]
+        self.invalid_gemini_models = set()
+        self.gemini_backoff_until = None
         
     def fetch_feed_entries(self, feed_url: str) -> List[Dict]:
         """Fetch and parse RSS feed entries"""
@@ -210,42 +213,54 @@ This article was automatically generated from RSS feeds. For more tech insights 
             msg['From'] = sender_email
             msg['To'] = recipient_email
             msg['X-RSS-Article-Link'] = link
+            source_name = self.get_source_name(link)
             
-            # Create detailed email body with read more links after each paragraph
+            # Create structured email body for a clearer reading experience
             email_body = f"""
 <!DOCTYPE html>
 <html>
 <head>
     <style>
-        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }}
-        .header {{ background: #2c3e50; color: white; padding: 20px; border-radius: 5px 5px 0 0; }}
-        .title {{ font-size: 24px; font-weight: bold; margin-bottom: 10px; }}
-        .meta {{ font-size: 14px; opacity: 0.9; }}
-        .content {{ padding: 20px; background: #f9f9f9; }}
-        .paragraph {{ margin-bottom: 20px; text-align: justify; }}
-        .readmore {{ display: block; margin-top: 10px; padding: 8px 16px; background: #3498db; color: white; text-decoration: none; border-radius: 4px; text-align: center; }}
-        .readmore:hover {{ background: #2980b9; }}
-        .footer {{ padding: 20px; background: #ecf0f1; border-radius: 0 0 5px 5px; text-align: center; font-size: 12px; color: #7f8c8d; }}
-        .original-link {{ margin-top: 15px; padding: 10px; background: #e8f4f8; border-left: 4px solid #3498db; }}
+        body {{ font-family: Arial, sans-serif; line-height: 1.7; color: #1f2937; max-width: 720px; margin: 0 auto; padding: 24px; background: #f3f6fb; }}
+        .container {{ background: #ffffff; border: 1px solid #dbe4f0; border-radius: 14px; overflow: hidden; }}
+        .header {{ background: linear-gradient(135deg, #1f3c88, #2563eb); color: white; padding: 28px; }}
+        .eyebrow {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.85; margin-bottom: 8px; }}
+        .title {{ font-size: 28px; font-weight: bold; line-height: 1.3; margin-bottom: 14px; }}
+        .meta {{ font-size: 14px; opacity: 0.95; }}
+        .content {{ padding: 28px; background: #ffffff; }}
+        .section {{ margin-bottom: 28px; }}
+        .section-title {{ font-size: 20px; font-weight: bold; color: #0f172a; margin-bottom: 12px; }}
+        .intro {{ font-size: 16px; color: #334155; }}
+        .article-body p {{ margin: 0 0 16px 0; text-align: left; }}
+        .article-body p:last-child {{ margin-bottom: 0; }}
+        .highlights {{ margin: 0; padding-left: 20px; color: #334155; }}
+        .highlights li {{ margin-bottom: 10px; }}
+        .cta-box {{ background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 18px; }}
+        .button {{ display: inline-block; margin-top: 12px; padding: 11px 18px; background: #2563eb; color: white !important; text-decoration: none; border-radius: 8px; font-weight: bold; }}
+        .metadata-grid {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; }}
+        .metadata-row {{ margin-bottom: 8px; }}
+        .metadata-row:last-child {{ margin-bottom: 0; }}
+        .label {{ font-weight: bold; color: #0f172a; }}
+        .footer {{ padding: 22px 28px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 13px; color: #64748b; }}
+        a {{ color: #2563eb; }}
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="title">{title}</div>
-        <div class="meta">Published: {pub_date.strftime('%B %d, %Y at %H:%M')}</div>
-    </div>
-    
-    <div class="content">
-        {content}
-    </div>
-    
-    <div class="original-link">
-        <strong>Original Article:</strong> <a href="{link}" style="color: #3498db;">{link}</a>
-    </div>
-    
-    <div class="footer">
-        <p>This article was automatically generated from RSS feeds.</p>
-        <p>Visit our blog for more tech insights: <a href="{self.base_url}" style="color: #3498db;">{self.base_url}</a></p>
+    <div class="container">
+        <div class="header">
+            <div class="eyebrow">Curated RSS Brief</div>
+            <div class="title">{html.escape(title)}</div>
+            <div class="meta">Published: {pub_date.strftime('%B %d, %Y at %H:%M')} | Source: {html.escape(source_name)}</div>
+        </div>
+
+        <div class="content">
+            {content}
+        </div>
+
+        <div class="footer">
+            <div>This article email was generated from your RSS automation workflow.</div>
+            <div>Blog home: <a href="{self.base_url}">{self.base_url}</a></div>
+        </div>
     </div>
 </body>
 </html>
@@ -269,19 +284,55 @@ This article was automatically generated from RSS feeds. For more tech insights 
             return False
     
     def format_detailed_content(self, title: str, description: str, link: str, pub_date: datetime) -> str:
-        """Format detailed content with 5-7 exhaustive paragraphs"""
+        """Format article content into a structured, reader-friendly email layout"""
         clean_paragraphs = self.build_email_content(title, description, link)
-        
-        # Format each paragraph with read more link
-        formatted_content = ""
-        for i, paragraph in enumerate(clean_paragraphs):
-            formatted_content += f"""
-        <div class="paragraph">
-            <p><strong>Paragraph {i+1}:</strong> {paragraph}</p>
-            <a href="{link}" class="readmore">Read original article</a>
+
+        summary_paragraph = clean_paragraphs[0] if clean_paragraphs else self.clean_text(description)
+        highlight_items = self.extract_key_points(clean_paragraphs, summary_paragraph)
+        detailed_sections = clean_paragraphs[1:] if len(clean_paragraphs) > 1 else [summary_paragraph]
+        detailed_html = "".join(
+            f"<p>{html.escape(paragraph)}</p>" for paragraph in detailed_sections if paragraph
+        )
+        highlights_html = "".join(
+            f"<li>{html.escape(item)}</li>" for item in highlight_items
+        )
+
+        return f"""
+        <div class="section">
+            <div class="section-title">Quick Summary</div>
+            <div class="intro">{html.escape(summary_paragraph)}</div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Key Takeaways</div>
+            <ul class="highlights">
+                {highlights_html}
+            </ul>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Detailed Coverage</div>
+            <div class="article-body">
+                {detailed_html}
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Article Details</div>
+            <div class="metadata-grid">
+                <div class="metadata-row"><span class="label">Published:</span> {pub_date.strftime('%B %d, %Y at %H:%M')}</div>
+                <div class="metadata-row"><span class="label">Source:</span> {html.escape(self.get_source_name(link))}</div>
+                <div class="metadata-row"><span class="label">Original link:</span> <a href="{link}">{html.escape(link)}</a></div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="cta-box">
+                <div class="section-title" style="margin-bottom: 8px;">Read the Full Article</div>
+                <div>If you want the exact wording, examples, or full context from the publisher, open the original source article.</div>
+                <a href="{link}" class="button">Open Original Article</a>
+            </div>
         </div>"""
-        
-        return formatted_content
     
     def build_email_content(self, title: str, description: str, link: str) -> List[str]:
         full_content = self.fetch_article_content(link)
@@ -356,6 +407,38 @@ This article was automatically generated from RSS feeds. For more tech insights 
         ]
         
         return templates[index % len(templates)]
+
+    def get_source_name(self, link: str) -> str:
+        """Return a clean source name from a URL"""
+        try:
+            hostname = urlparse(link).netloc.lower()
+            hostname = re.sub(r'^www\.', '', hostname)
+            if not hostname:
+                return "Unknown source"
+
+            return hostname.split(':')[0]
+        except Exception:
+            return "Unknown source"
+
+    def extract_key_points(self, paragraphs: List[str], fallback_summary: str) -> List[str]:
+        """Build concise highlight bullets from article paragraphs"""
+        candidates = []
+
+        for paragraph in paragraphs:
+            sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+            for sentence in sentences:
+                cleaned = self.clean_text(sentence)
+                if 45 <= len(cleaned) <= 220:
+                    candidates.append(cleaned)
+                if len(candidates) >= 4:
+                    break
+            if len(candidates) >= 4:
+                break
+
+        if not candidates and fallback_summary:
+            candidates.append(self.clean_text(fallback_summary))
+
+        return candidates[:4]
     
     def clean_text(self, value: str) -> str:
         """Convert HTML-heavy text into clean plain text"""
@@ -388,11 +471,17 @@ This article was automatically generated from RSS feeds. For more tech insights 
         if not self.gemini_api_key or not article_content:
             return None
 
-        prompt = f"""Create exactly 6 detailed paragraphs for a blog email based strictly on the source article below.
+        if self.gemini_backoff_until and datetime.now() < self.gemini_backoff_until:
+            logger.info("Skipping Gemini expansion for %s because backoff is active until %s", title, self.gemini_backoff_until.isoformat())
+            return None
+
+        prompt = f"""Create a structured article digest for an email newsletter based strictly on the source article below.
 Requirements:
 - Use only the provided information.
 - Do not invent facts.
-- Each paragraph should be 3 to 5 sentences.
+- Start with 1 concise summary paragraph.
+- Then write 3 to 5 detailed paragraphs.
+- Keep the writing natural and readable, not repetitive.
 - Return plain text only.
 - Separate each paragraph with a blank line.
 
@@ -419,7 +508,7 @@ Article Content:
         seen_models = set()
 
         for model_name in self.gemini_model_fallbacks:
-            if not model_name or model_name in seen_models:
+            if not model_name or model_name in seen_models or model_name in self.invalid_gemini_models:
                 continue
 
             seen_models.add(model_name)
@@ -428,6 +517,17 @@ Article Content:
             try:
                 logger.info("Expanding content with Gemini model %s for article: %s", model_name, title)
                 response = requests.post(url, json=payload, timeout=45)
+
+                if response.status_code == 404:
+                    self.invalid_gemini_models.add(model_name)
+                    logger.warning("Gemini model %s is unavailable (404) and will be skipped in later attempts", model_name)
+                    continue
+
+                if response.status_code == 429:
+                    self.gemini_backoff_until = datetime.now() + timedelta(minutes=15)
+                    logger.warning("Gemini rate limit reached with model %s. Backing off until %s", model_name, self.gemini_backoff_until.isoformat())
+                    return None
+
                 response.raise_for_status()
                 data = response.json()
                 candidates = data.get('candidates', [])
@@ -447,7 +547,7 @@ Article Content:
                     if self.clean_text(paragraph)
                 ]
 
-                if len(paragraphs) < 5:
+                if len(paragraphs) < 4:
                     logger.warning("Gemini returned insufficient paragraphs with model %s for article: %s", model_name, title)
                     continue
 
