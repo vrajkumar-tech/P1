@@ -299,26 +299,26 @@ This article was automatically generated from RSS feeds. For more tech insights 
 
         return f"""
         <div class="section">
-            <div class="section-title">Quick Summary</div>
+            <div class="section-title"><a href="https://rkoots.github.io/blog/">Quick Summary</a></div>
             <div class="intro">{html.escape(summary_paragraph)}</div>
         </div>
 
         <div class="section">
-            <div class="section-title">Key Takeaways</div>
+            <div class="section-title"><a href="https://rkoots.github.io/blog/">Key Takeaways</a></div>
             <ul class="highlights">
                 {highlights_html}
             </ul>
         </div>
 
         <div class="section">
-            <div class="section-title">Detailed Coverage</div>
+            <div class="section-title"><a href="https://rkoots.github.io/blog/">Detailed Coverage</div>
             <div class="article-body">
                 {detailed_html}
             </div>
         </div>
 
         <div class="section">
-            <div class="section-title">Article Details</div>
+            <div class="section-title"><a href="https://rkoots.github.io/blog/">Article Details</a></div>
             <div class="metadata-grid">
                 <div class="metadata-row"><span class="label">Published:</span> {pub_date.strftime('%B %d, %Y at %H:%M')}</div>
                 <div class="metadata-row"><span class="label">Source:</span> {html.escape(self.get_source_name(link))}</div>
@@ -328,9 +328,9 @@ This article was automatically generated from RSS feeds. For more tech insights 
 
         <div class="section">
             <div class="cta-box">
-                <div class="section-title" style="margin-bottom: 8px;">Read the Full Article</div>
+                <div class="section-title" style="margin-bottom: 8px;"><a href="https://rkoots.github.io/blog/">Read the Full Article</a></div>
                 <div>If you want the exact wording, examples, or full context from the publisher, open the original source article.</div>
-                <a href="{link}" class="button">Open Original Article</a>
+                <a href="https://rkoots.github.io/blog/" class="button">Open Original Article</a>
             </div>
         </div>"""
     
