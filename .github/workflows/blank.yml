@@ -43,7 +43,7 @@ jobs:
           import smtplib
           from email.mime.text import MIMEText
           from email.mime.multipart import MIMEMultipart
-          from datetime import datetime, timedelta
+          from datetime import datetime, timedelta, timezone
           from typing import List, Dict, Optional
           import logging
           from bs4 import BeautifulSoup
@@ -70,14 +70,14 @@ jobs:
                       entries = []
                       
                       for entry in feed.entries:
-                          # Parse publication date
+                          # Parse publication date with timezone handling
                           pub_date = None
                           if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                              pub_date = datetime(*entry.published_parsed[:6])
+                              pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
                           elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                              pub_date = datetime(*entry.updated_parsed[:6])
+                              pub_date = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
                           else:
-                              pub_date = datetime.now()
+                              pub_date = datetime.now(timezone.utc)
                           
                           # Get description with proper fallback
                           description = ""
@@ -150,7 +150,7 @@ jobs:
               
               def filter_recent_entries(self, entries: List[Dict], hours: int = 1) -> List[Dict]:
                   """Filter entries from the last N hours"""
-                  cutoff_time = datetime.now() - timedelta(hours=hours)
+                  cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
                   recent_entries = []
                   
                   for entry in entries:
@@ -159,6 +159,15 @@ jobs:
                   
                   logger.info(f"Found {len(recent_entries)} entries from the last {hours} hour(s)")
                   return recent_entries
+              
+              def get_latest_entries(self, entries: List[Dict], count: int = 10) -> List[Dict]:
+                  """Get the latest N entries sorted by publication date"""
+                  # Sort by publication date (newest first)
+                  sorted_entries = sorted(entries, key=lambda x: x['pub_date'], reverse=True)
+                  latest_entries = sorted_entries[:count]
+                  
+                  logger.info(f"Selected latest {len(latest_entries)} entries")
+                  return latest_entries
               
               def send_email(self, blog_posts: List[str]) -> bool:
                   """Send blog posts via email"""
@@ -252,8 +261,13 @@ jobs:
                   # Filter recent entries (last 1 hour)
                   recent_entries = self.filter_recent_entries(all_entries, 1)
                   
+                  # If no recent entries, get latest 10 entries as fallback
                   if not recent_entries:
-                      logger.info("No recent entries found. Skipping email.")
+                      logger.info("No recent entries found. Using latest 10 entries as fallback.")
+                      recent_entries = self.get_latest_entries(all_entries, 10)
+                  
+                  if not recent_entries:
+                      logger.info("No entries found at all. Skipping email.")
                       return
                   
                   # Generate email content
